@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>TV Remote</title>
+<style>
+  :root { --bg:#0e1116; --card:#181d25; --line:#272e39; --text:#f2f4f8; --dim:#9aa4b2; --accent:#4f8cff; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px system-ui,sans-serif; }
+  .wrap { max-width:480px; margin:0 auto; padding:16px; }
+  h1 { font-size:20px; margin:4px 0 16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px; margin-bottom:16px; }
+  input[type=text], input[type=tel] { width:100%; padding:14px; border-radius:12px; border:1px solid var(--line);
+    background:#0e1116; color:var(--text); font-size:18px; }
+  button { font:inherit; color:var(--text); background:#222936; border:1px solid var(--line); border-radius:12px; padding:14px; }
+  button:active { background:#2d3647; }
+  .primary { background:var(--accent); border-color:var(--accent); color:#fff; width:100%; margin-top:12px; font-weight:600; }
+  .pad { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; max-width:260px; margin:0 auto; }
+  .pad button { height:68px; font-size:24px; }
+  .pad .ok { background:var(--accent); border-color:var(--accent); font-size:18px; font-weight:600; }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 0; border-top:1px solid var(--line); }
+  .row:first-of-type { border-top:0; }
+  .name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .name small { display:block; color:var(--dim); font-size:12px; overflow:hidden; text-overflow:ellipsis; }
+  .launch { padding:10px 16px; }
+  label.sw { display:flex; align-items:center; gap:6px; color:var(--dim); font-size:13px; }
+  .err { color:#f87171; margin-top:8px; min-height:1.2em; }
+  .hidden { display:none; }
+  .top { display:flex; justify-content:space-between; align-items:center; }
+  .link { background:none; border:0; color:var(--dim); padding:6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="login" class="card">
+    <h1>TV Remote</h1>
+    <p style="color:var(--dim);margin-top:0">Enter the 4-digit PIN shown at the bottom of your TV.</p>
+    <input id="pin" type="tel" inputmode="numeric" maxlength="4" placeholder="PIN" autocomplete="off">
+    <button class="primary" onclick="login()">Connect</button>
+    <div id="err" class="err"></div>
+  </div>
+
+  <div id="main" class="hidden">
+    <div class="top">
+      <h1>TV Remote</h1>
+      <button class="link" onclick="logout()">Disconnect</button>
+    </div>
+
+    <div class="card">
+      <div class="pad">
+        <span></span><button onclick="key('up')">▲</button><span></span>
+        <button onclick="key('left')">◀</button><button class="ok" onclick="key('ok')">OK</button><button onclick="key('right')">▶</button>
+        <span></span><button onclick="key('down')">▼</button><span></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <input id="search" type="text" placeholder="Search apps" oninput="render()">
+      <div id="apps" style="margin-top:8px"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let pin = null, apps = [];
+  const $ = id => document.getElementById(id);
+
+  async function api(path, params) {
+    const qs = new URLSearchParams(Object.assign({}, params || {}, { pin }));
+    const r = await fetch('/api/' + path + '?' + qs);
+    if (r.status === 401) { logout(); throw new Error('bad pin'); }
+    return r.json();
+  }
+
+  async function login() {
+    pin = $('pin').value.trim();
+    $('err').textContent = '';
+    try {
+      await api('ping');
+      localStorage.setItem('tvpin', pin);
+      $('login').classList.add('hidden');
+      $('main').classList.remove('hidden');
+      load();
+    } catch (e) {
+      $('err').textContent = 'Wrong PIN or TV not reachable.';
+    }
+  }
+
+  function logout() {
+    pin = null;
+    localStorage.removeItem('tvpin');
+    $('main').classList.add('hidden');
+    $('login').classList.remove('hidden');
+  }
+
+  async function load() { apps = await api('apps'); render(); }
+
+  function render() {
+    const f = $('search').value.toLowerCase();
+    const box = $('apps');
+    box.innerHTML = '';
+    apps.filter(a => a.label.toLowerCase().includes(f)).forEach(a => {
+      const row = document.createElement('div');
+      row.className = 'row';
+
+      const name = document.createElement('div');
+      name.className = 'name';
+      name.textContent = a.label;
+      const sub = document.createElement('small');
+      sub.textContent = a.pkg;
+      name.appendChild(sub);
+
+      const sw = document.createElement('label');
+      sw.className = 'sw';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = !a.hidden;
+      cb.onchange = async () => {
+        a.hidden = !cb.checked;
+        await api('hide', { pkg: a.pkg, hide: a.hidden ? 1 : 0 });
+      };
+      sw.appendChild(cb);
+      sw.appendChild(document.createTextNode('Show'));
+
+      const btn = document.createElement('button');
+      btn.className = 'launch';
+      btn.textContent = 'Open';
+      btn.onclick = () => api('launch', { pkg: a.pkg });
+
+      row.append(name, sw, btn);
+      box.appendChild(row);
+    });
+  }
+
+  function key(k) { api('key', { k }); if (navigator.vibrate) navigator.vibrate(10); }
+
+  const saved = localStorage.getItem('tvpin');
+  if (saved) { $('pin').value = saved; login(); }
+</script>
+</body>
+</html>
